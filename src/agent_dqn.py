@@ -1,15 +1,9 @@
-import json
 import random
-from prioritized_exp_replay_memory import PrioritizedExperienceReplayMemory
+import numpy as np
+from memory_replay import MemoryReplay
 import torch
-import torch.nn.functional as F
-
 from dqn import DQN
 from collections import namedtuple
-
-Experience = namedtuple(
-    "Experience", ["state", "action", "reward", "next_state", "done"]
-)
 
 
 class AgentDQN:
@@ -46,8 +40,8 @@ class AgentDQN:
 
         # replay memory
 
-        self.memory = PrioritizedExperienceReplayMemory(1000)
-        self.BATCH_SIZE = 64
+        self.BATCH_SIZE = 32
+        self.replay_memory = MemoryReplay(self.BATCH_SIZE)
 
         # epsilon greedy
 
@@ -82,21 +76,21 @@ class AgentDQN:
         next_state: list[int],
         done: bool,
     ):
-        t = (
-            state,
-            action,
-            reward,
-            next_state if not done else None,
-            done,
-        )
 
         if state[self.n_observations - 1] == 1:
             raise Exception("final state")
 
-        # self.memory.append(t)
-        self.memory.store(t)
+        tuple_experience = (
+            state,
+            action,
+            reward,
+            next_state,
+            done,
+        )
 
-    def batch_backward(self, batch: list[Experience], weights=None):
+        self.replay_memory.append(tuple_experience)
+
+    def batch_backward(self, batch: list, weights=None):
         transposee = [([]) for _ in range(5)]
         for experience in batch:
             for ix, item in enumerate(experience):
@@ -119,7 +113,8 @@ class AgentDQN:
 
         # matrice (M, 1) avec M <= N (car on retire les états finaux)
         batch_next_state_not_final = torch.tensor(
-            [x for x in transposee[3] if x is not None], dtype=torch.float32
+            [experience[3] for experience in batch if not experience[4]],
+            dtype=torch.float32,
         )
 
         # vecteur taille N
@@ -157,13 +152,13 @@ class AgentDQN:
 
     def optimize_model(self):
 
-        b_idx, memory_b, b_ISWeights = self.memory.sample(self.BATCH_SIZE)
-        # memory_b est un tableau d'experience, chaque experience étant un iterable state, action, reward, next_state, done
+        if len(self.replay_memory) < self.BATCH_SIZE:
+            return
 
-        td_error = self.batch_backward(memory_b, b_ISWeights)
+        batch = self.replay_memory.sample(self.BATCH_SIZE)
+        td_error = self.batch_backward(batch)
 
-        # mise à jour des priorité
-        self.memory.batch_update(b_idx, td_error)
+        return np.mean(td_error)
 
     def update_target_network(self):
         self.target_dqn.load_state_dict(self.dqn.state_dict())
@@ -174,6 +169,3 @@ class AgentDQN:
     def load_model(self, filepath):
         weights = torch.load(filepath, weights_only=True)
         self.dqn.model.load_state_dict(weights)
-
-    def memory_length(self):
-        return len(self.memory)

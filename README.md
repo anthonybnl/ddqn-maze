@@ -1,5 +1,7 @@
 # Double Deep Q-Learning
 
+![Maze](doc/maze.png)
+
 ## installation
 
 ```bash

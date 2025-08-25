@@ -10,9 +10,9 @@ import random
 SHOULD_GENERATE_MAZE = True
 SHOULD_TRAIN = True
 
-N_EPISODE_TRAIN = 200
+N_EPISODE_TRAIN = 100
 
-LAB_SIZE = 5
+LAB_SIZE = 8
 
 
 def main():
@@ -22,8 +22,8 @@ def main():
     agent = AgentDQN(
         n_observations,
         n_actions,
-        initial_epsilon=0.7,
-        epsilon_decay=(0.7 - 0.1) / (0.8 * N_EPISODE_TRAIN),
+        initial_epsilon=0.9,
+        epsilon_decay=(0.9 - 0.1) / (0.5 * N_EPISODE_TRAIN),
         final_epsilon=0.1,
         lr=1e-2,
     )
@@ -88,44 +88,6 @@ def train(agent: AgentDQN, env: Environment):
 
     episode_durations = []
 
-    episode_pretrain = 0
-
-    # fill memory
-    while agent.memory_length() < agent.memory.tree.capacity:
-        (observation,) = env.reset()
-        state, liste_actions_possibles = observation
-
-        done = False
-
-        print(f"episode_pretrain : {agent.memory_length()}")
-        while not done:
-
-            state_as_list = int_state_to_list_state(state, agent.n_observations)
-
-            action = random.randrange(agent.n_actions)
-
-            if action in liste_actions_possibles:
-                observation, reward, done = env.step(action)
-            else:
-                observation, reward, done = observation, -10, False
-
-            next_state, liste_actions_possibles = observation
-            next_state_list = int_state_to_list_state(next_state, agent.n_observations)
-
-            agent.memorize(
-                state_as_list,
-                action,
-                reward,
-                next_state_list,
-                done,
-            )
-            state = next_state
-
-            episode_pretrain += 1
-
-    print("fin du pretrain, début de l'entraînement ...")
-
-    # real training
     for episode in range(N_EPISODE_TRAIN):
 
         (observation,) = env.reset()
@@ -143,7 +105,7 @@ def train(agent: AgentDQN, env: Environment):
             if action in liste_actions_possibles:
                 observation, reward, done = env.step(action)
             else:
-                observation, reward, done = observation, -1, False
+                observation, reward, done = observation, -10, False
 
             next_state, liste_actions_possibles = observation
             next_state_list = int_state_to_list_state(next_state, agent.n_observations)
@@ -161,7 +123,7 @@ def train(agent: AgentDQN, env: Environment):
             global_step += 1
             step_for_this_episode += 1
 
-            if global_step % 200 == 0:
+            if global_step % 25 == 0:
                 agent.update_target_network()
 
             state = next_state
