@@ -36,7 +36,7 @@ class AgentDQN:
 
         self.optimizer = torch.optim.Adam(self.dqn.parameters(), lr=self.lr)
 
-        self.loss_fn = torch.nn.SmoothL1Loss()
+        self.loss_fn = torch.nn.SmoothL1Loss(reduction="none")
 
         # replay memory
 
@@ -136,12 +136,23 @@ class AgentDQN:
 
         # loss = self.loss_fn(state_action_values, target)
         if weights is None:
-            t_weights = torch.ones(len(batch))
+            t_weights = torch.ones(len(batch)).unsqueeze(-1)
         else:
             t_weights = torch.tensor(weights)
 
+        assert (
+            t_weights.shape == state_action_values.shape
+        ), "les poids doivent être de dimension (N, 1)"
+
         td_error = torch.abs(state_action_values - target).detach()
-        loss = torch.mean(t_weights * torch.pow(state_action_values - target, 2))
+        # loss = torch.mean(t_weights * torch.pow(state_action_values - target, 2))
+        loss_not_reduced = t_weights * self.loss_fn(state_action_values, target)
+
+        assert (
+            loss_not_reduced.shape == state_action_values.shape
+        ), "la loss function ne doit pas reduire"
+
+        loss = torch.mean(loss_not_reduced)
 
         self.optimizer.zero_grad()
         loss.backward()

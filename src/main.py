@@ -22,8 +22,8 @@ def main():
     agent = AgentDQN(
         n_observations,
         n_actions,
-        initial_epsilon=0.9,
-        epsilon_decay=(0.9 - 0.1) / (0.5 * N_EPISODE_TRAIN),
+        initial_epsilon=0.8,
+        epsilon_decay=(0.8 - 0.1) / (0.5 * N_EPISODE_TRAIN),
         final_epsilon=0.1,
         lr=1e-2,
     )
