@@ -5,10 +5,12 @@ import torch
 from PIL import Image
 import matplotlib.pyplot as plt
 from datetime import datetime
+import random
 
-SHOULD_GENERATE_MAZE_AND_TRAIN = True
+SHOULD_GENERATE_MAZE = True
+SHOULD_TRAIN = True
 
-N_EPISODE_TRAIN = 50
+N_EPISODE_TRAIN = 200
 
 LAB_SIZE = 5
 
@@ -20,15 +22,19 @@ def main():
     agent = AgentDQN(
         n_observations,
         n_actions,
-        initial_epsilon=0.9,
-        epsilon_decay=1.0 / (0.9 * N_EPISODE_TRAIN),
+        initial_epsilon=0.7,
+        epsilon_decay=(0.7 - 0.1) / (0.8 * N_EPISODE_TRAIN),
         final_epsilon=0.1,
         lr=1e-2,
     )
 
-    if SHOULD_GENERATE_MAZE_AND_TRAIN:
+    if SHOULD_GENERATE_MAZE:
         env = Environment(size=LAB_SIZE)
+        env.save_labyrinthe(path.join(getcwd(), "labyrinthe.json"))
+    else:
+        env = Environment(labyrinthe_file_path=path.join(getcwd(), "labyrinthe.json"))
 
+    if SHOULD_TRAIN:
         now = datetime.now()
         print(f"début de l'entraînement : {now}")
 
@@ -40,11 +46,9 @@ def main():
         duration = end - now
         print(f"temps total d'entraînement : {duration}")
 
-        env.save_labyrinthe(path.join(getcwd(), "labyrinthe.json"))
-        agent.save_model(path.join(getcwd(), "model_checkpoint"))
+        agent.save_model(path.join(getcwd(), "model_checkpoint.ckpt"))
     else:
-        env = Environment(labyrinthe_file_path=path.join(getcwd(), "labyrinthe.json"))
-        agent.load_model(path.join(getcwd(), "model_checkpoint"))
+        agent.load_model(path.join(getcwd(), "model_checkpoint.ckpt"))
 
     list_all_q_values(agent)
 
@@ -84,6 +88,44 @@ def train(agent: AgentDQN, env: Environment):
 
     episode_durations = []
 
+    episode_pretrain = 0
+
+    # fill memory
+    while agent.memory_length() < agent.memory.tree.capacity:
+        (observation,) = env.reset()
+        state, liste_actions_possibles = observation
+
+        done = False
+
+        print(f"episode_pretrain : {agent.memory_length()}")
+        while not done:
+
+            state_as_list = int_state_to_list_state(state, agent.n_observations)
+
+            action = random.randrange(agent.n_actions)
+
+            if action in liste_actions_possibles:
+                observation, reward, done = env.step(action)
+            else:
+                observation, reward, done = observation, -10, False
+
+            next_state, liste_actions_possibles = observation
+            next_state_list = int_state_to_list_state(next_state, agent.n_observations)
+
+            agent.memorize(
+                state_as_list,
+                action,
+                reward,
+                next_state_list,
+                done,
+            )
+            state = next_state
+
+            episode_pretrain += 1
+
+    print("fin du pretrain, début de l'entraînement ...")
+
+    # real training
     for episode in range(N_EPISODE_TRAIN):
 
         (observation,) = env.reset()
@@ -119,7 +161,7 @@ def train(agent: AgentDQN, env: Environment):
             global_step += 1
             step_for_this_episode += 1
 
-            if global_step % 100 == 0:
+            if global_step % 200 == 0:
                 agent.update_target_network()
 
             state = next_state
@@ -130,6 +172,7 @@ def train(agent: AgentDQN, env: Environment):
         )
 
         agent.decay_epsilon()
+        episode += 1
 
     print(f"nombre total de steps : {global_step}")
 

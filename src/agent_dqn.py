@@ -1,11 +1,15 @@
+import json
 import random
+from prioritized_exp_replay_memory import PrioritizedExperienceReplayMemory
 import torch
+import torch.nn.functional as F
 
 from dqn import DQN
+from collections import namedtuple
 
-from collections import deque
-
-from memory_replay import MemoryReplay
+Experience = namedtuple(
+    "Experience", ["state", "action", "reward", "next_state", "done"]
+)
 
 
 class AgentDQN:
@@ -42,8 +46,8 @@ class AgentDQN:
 
         # replay memory
 
-        self.memory = MemoryReplay(1000)
-        self.BATCH_SIZE = 100
+        self.memory = PrioritizedExperienceReplayMemory(1000)
+        self.BATCH_SIZE = 64
 
         # epsilon greedy
 
@@ -89,63 +93,77 @@ class AgentDQN:
         if state[self.n_observations - 1] == 1:
             raise Exception("final state")
 
-        self.memory.append(t)
+        # self.memory.append(t)
+        self.memory.store(t)
 
-    def optimize_model(self):
-        if len(self.memory) < self.BATCH_SIZE:
-            return
-
-        sample = self.memory.sample(self.BATCH_SIZE)
-
+    def batch_backward(self, batch: list[Experience], weights=None):
         transposee = [([]) for _ in range(5)]
-
-        for t in sample:
-            for ix, item in enumerate(t):
+        for experience in batch:
+            for ix, item in enumerate(experience):
                 transposee[ix].append(item)
 
-        batch_state = torch.tensor(
-            transposee[0], dtype=torch.float32
-        )  # tenseur de state (matrice N*n_observation)
+        # tenseur de state (matrice N*n_observation)
+        batch_state = torch.tensor(transposee[0], dtype=torch.float32)
 
-        batch_action = torch.tensor(transposee[1]).unsqueeze(
-            -1
-        )  # tenseur d'action (matrice N*1)
+        # tenseur d'action (matrice N*1)
+        batch_action = torch.tensor(transposee[1]).unsqueeze(-1)
 
-        pred: torch.Tensor = self.dqn(
-            batch_state
-        )  # tenseur des prédictions (matrice N*n_action), gradient
+        # tenseur des prédictions (matrice N*n_action), gradient
+        pred: torch.Tensor = self.dqn(batch_state)
 
-        state_action_values = pred.gather(
-            1, batch_action
-        )  # matrice N*1 avec les QValues de (s, a), gradient
+        # matrice N*1 avec les QValues de (s, a), gradient
+        state_action_values = pred.gather(1, batch_action)
 
-        batch_reward = torch.tensor(transposee[2]).unsqueeze(
-            -1
-        )  # tenseur de reward (matrice N*1)
+        # tenseur de reward (matrice N*1)
+        batch_reward = torch.tensor(transposee[2]).unsqueeze(-1)
 
+        # matrice (M, 1) avec M <= N (car on retire les états finaux)
         batch_next_state_not_final = torch.tensor(
             [x for x in transposee[3] if x is not None], dtype=torch.float32
-        )  # matrice (M, 1) avec M <= N (car on retire les états finaux)
+        )
 
+        # vecteur taille N
         batch_is_not_final = torch.tensor(
             [not b for b in transposee[4]], dtype=torch.bool
-        )  # vecteur taille N
+        )
 
         # target : reward si état terminal, sinon reward + gamma * max(q_s'_a)
+        next_state_values = torch.zeros(self.BATCH_SIZE)  # vecteur N
 
-        next_state_values = torch.zeros(len(sample))  # vecteur N
-        with torch.no_grad():
-            res = self.target_dqn(batch_next_state_not_final).max(1).values
-            next_state_values[batch_is_not_final] = res
+        if batch_next_state_not_final.shape[0] != 0:
+            with torch.no_grad():
+                res = self.target_dqn(batch_next_state_not_final).max(1).values
+                next_state_values[batch_is_not_final] = res
 
         target = batch_reward + self.gamma * next_state_values.unsqueeze(-1)
 
         # retropropagation
 
-        loss = self.loss_fn(state_action_values, target)
+        # loss = self.loss_fn(state_action_values, target)
+        if weights is None:
+            t_weights = torch.ones(len(batch))
+        else:
+            t_weights = torch.tensor(weights)
+
+        td_error = torch.abs(state_action_values - target).detach()
+        loss = torch.mean(t_weights * torch.pow(state_action_values - target, 2))
+
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+
+        # on retourne l'erreur en valeur absolue pour chaque experience
+        return td_error.numpy()
+
+    def optimize_model(self):
+
+        b_idx, memory_b, b_ISWeights = self.memory.sample(self.BATCH_SIZE)
+        # memory_b est un tableau d'experience, chaque experience étant un iterable state, action, reward, next_state, done
+
+        td_error = self.batch_backward(memory_b, b_ISWeights)
+
+        # mise à jour des priorité
+        self.memory.batch_update(b_idx, td_error)
 
     def update_target_network(self):
         self.target_dqn.load_state_dict(self.dqn.state_dict())
@@ -156,3 +174,6 @@ class AgentDQN:
     def load_model(self, filepath):
         weights = torch.load(filepath, weights_only=True)
         self.dqn.model.load_state_dict(weights)
+
+    def memory_length(self):
+        return len(self.memory)
